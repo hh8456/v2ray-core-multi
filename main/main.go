@@ -231,7 +231,6 @@ func getCfg(w http.ResponseWriter, r *http.Request) {
 
 func startNewV2Ray(key string, input io.Reader, w http.ResponseWriter) {
 	mu.Lock()
-	defer mu.Unlock()
 	if c, find := mapConfig[key]; find {
 		log.Println("已经有了同样一个实例")
 		fmt.Fprintf(w, "已经有了同样一个实例")
@@ -254,10 +253,13 @@ func startNewV2Ray(key string, input io.Reader, w http.ResponseWriter) {
 	//return
 	/*}*/
 
+	mu.Unlock()
 	fmt.Fprintf(w, "succ")
 	go func() {
 		if err := server.Start(); err != nil {
+			mu.Lock()
 			delete(mapConfig, key)
+			mu.Unlock()
 			fmt.Println("Failed to start", err)
 			fmt.Fprintln(w, "Failed to start")
 			http.Error(w, "Failed to start", http.StatusInternalServerError)
