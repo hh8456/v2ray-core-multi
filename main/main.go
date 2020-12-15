@@ -196,11 +196,11 @@ func deleteCfg(w http.ResponseWriter, r *http.Request) {
 		}
 		defer r.Body.Close()
 		mu.Lock()
+		defer mu.Unlock()
 		if c, find := mapConfig[string(b)]; find {
 			// Explicitly triggering GC to remove garbage from config loading.
 			//runtime.GC()
 			delete(mapConfig, string(b))
-			mu.Unlock()
 			jsonConfig, err := serial.DecodeJSONConfig(bytes.NewReader(b))
 			if err == nil {
 				for _, v := range jsonConfig.InboundConfigs {
@@ -217,7 +217,6 @@ func deleteCfg(w http.ResponseWriter, r *http.Request) {
 			log.Println("删除了一个实例")
 			return
 		}
-		mu.Unlock()
 
 		fmt.Fprintf(w, "删除时, 没有发现对应的配置")
 		log.Println("删除时, 没有发现对应的配置")
@@ -277,6 +276,7 @@ func startNewV2Ray(key string, input io.Reader, w http.ResponseWriter) {
 	}
 	server, err := startV2RayCoustom(input)
 	if err != nil {
+		mu.Unlock()
 		fmt.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
