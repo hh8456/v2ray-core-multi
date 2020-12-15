@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -47,8 +48,8 @@ var (
 		return nil
 	}()
 
-	mu        sync.RWMutex
-	mapConfig map[string]core.Server
+	//mapConfig map[string]core.Server
+	mapConfig sync.Map // config - core.Server
 )
 
 func md5_32bit(s string) string {
@@ -195,12 +196,10 @@ func deleteCfg(w http.ResponseWriter, r *http.Request) {
 			log.Println("Read failed:", err)
 		}
 		defer r.Body.Close()
-		mu.Lock()
-		defer mu.Unlock()
-		if c, find := mapConfig[string(b)]; find {
+		if v, loaded := mapConfig.Load(string(b)); loaded {
 			// Explicitly triggering GC to remove garbage from config loading.
 			//runtime.GC()
-			delete(mapConfig, string(b))
+			mapConfig.Delete(string(b))
 			jsonConfig, err := serial.DecodeJSONConfig(bytes.NewReader(b))
 			if err == nil {
 				for _, v := range jsonConfig.InboundConfigs {
@@ -212,7 +211,7 @@ func deleteCfg(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			c.Close()
+			v.(core.Server).Close()
 			fmt.Fprintf(w, "删除了一个实例")
 			log.Println("删除了一个实例")
 			return
@@ -229,11 +228,10 @@ func deleteCfg(w http.ResponseWriter, r *http.Request) {
 func getCfg(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
 		cfgs := make([]string, 0, 10)
-		mu.RLock()
-		defer mu.RUnlock()
-		for k := range mapConfig {
-			cfgs = append(cfgs, k)
-		}
+		mapConfig.Range(func(k, v interface{}) bool {
+			cfgs = append(cfgs, k.(string))
+			return true
+		})
 
 		fmt.Fprintf(w, "%v", cfgs)
 	} else {
@@ -243,47 +241,56 @@ func getCfg(w http.ResponseWriter, r *http.Request) {
 }
 
 func usingport(w http.ResponseWriter, r *http.Request) {
-	cfgs := make([]string, 0, 10)
-	mu.RLock()
-	defer mu.RUnlock()
-	for k := range mapConfig {
-		jsonConfig, err := serial.DecodeJSONConfig(bytes.NewReader([]byte(k)))
+	type Usingport struct {
+		From int
+		To   int
+	}
+
+	type UsingportList struct {
+		UsingPorts []*Usingport
+	}
+
+	ret := UsingportList{}
+	mapConfig.Range(func(k, v interface{}) bool {
+		jsonConfig, err := serial.DecodeJSONConfig(bytes.NewReader([]byte(k.(string))))
 		if err == nil {
 			for _, v := range jsonConfig.InboundConfigs {
 				if v.Tag == "proxy" {
 					if v.PortRange != nil {
-						str := fmt.Sprintf("正在使用的代理实例, 监听本机端口: from - %d, to - %d\n", v.PortRange.From, v.PortRange.To)
-						cfgs = append(cfgs, str)
+						up := &Usingport{}
+						up.From = int(v.PortRange.From)
+						up.To = int(v.PortRange.To)
+						ret.UsingPorts = append(ret.UsingPorts, up)
 					}
 				}
 			}
 		}
-	}
 
-	fmt.Fprintf(w, "%v", cfgs)
+		return true
+	})
+
+	js, _ := json.Marshal(&ret)
+	fmt.Fprintf(w, "%s", js)
 
 }
 
 func startNewV2Ray(key string, input io.Reader, w http.ResponseWriter) {
-	mu.Lock()
-	if c, find := mapConfig[key]; find {
+	if v, loaded := mapConfig.Load(key); loaded {
 		log.Println("已经有了同样一个实例")
 		fmt.Fprintf(w, "已经有了同样一个实例")
-		c.Close()
+		v.(core.Server).Close()
 		// Explicitly triggering GC to remove garbage from config loading.
 		//runtime.GC()
-		delete(mapConfig, key)
+		mapConfig.Delete(key)
 	}
 	server, err := startV2RayCoustom(input)
 	if err != nil {
-		mu.Unlock()
 		fmt.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	mapConfig[key] = server
-	mu.Unlock()
+	mapConfig.Store(key, server)
 
 	jsonConfig, err := serial.DecodeJSONConfig(bytes.NewReader([]byte(key)))
 	if err == nil {
@@ -299,9 +306,7 @@ func startNewV2Ray(key string, input io.Reader, w http.ResponseWriter) {
 	fmt.Fprintf(w, "succ")
 	go func() {
 		if err := server.Start(); err != nil {
-			mu.Lock()
-			delete(mapConfig, key)
-			mu.Unlock()
+			mapConfig.Delete(key)
 			fmt.Println("Failed to start", err)
 			fmt.Fprintln(w, "Failed to start")
 			http.Error(w, "Failed to start", http.StatusInternalServerError)
@@ -348,7 +353,7 @@ func main() {
 	wlogrus.SetOutput(fileAndStdoutWriter)
 	wlogrus.SetLevel(wlogrus.TraceLevel)
 
-	mapConfig = map[string]core.Server{}
+	//mapConfig = map[string]core.Server{}
 
 	http.HandleFunc("/add", addCfg)
 	http.HandleFunc("/delete", deleteCfg)
