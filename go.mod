@@ -12,6 +12,7 @@ require (
 	github.com/miekg/dns v1.1.35
 	github.com/pires/go-proxyproto v0.3.1
 	github.com/seiflotfy/cuckoofilter v0.0.0-20201009151232-afb285a456ab
+	github.com/sirupsen/logrus v1.7.0
 	github.com/stretchr/testify v1.6.1
 	github.com/xiaokangwang/VSign v0.0.0-20200828155424-dc1c86b73fbf
 	github.com/xtls/go v0.0.0-20201020033950-18b68c051c9b
@@ -24,5 +25,6 @@ require (
 	google.golang.org/genproto v0.0.0-20201029200359-8ce4113da6f7 // indirect
 	google.golang.org/grpc v1.33.1
 	google.golang.org/protobuf v1.25.0
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	h12.io/socks v1.0.1
 )
